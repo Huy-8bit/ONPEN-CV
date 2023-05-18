@@ -1,51 +1,58 @@
 import cv2
+import os
 
-print(cv2.__version__)
-# Set up tracker
-tracker = cv2.TrackerCSRT_create()
+# Khởi tạo bộ phân loại khuôn mặt
+face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
 
-# Read video
-video = cv2.VideoCapture(0)
+# Khởi tạo đối tượng VideoCapture để truy cập vào camera
+cap = cv2.VideoCapture(0)
 
-# Exit if video not opened
-if not video.isOpened():
-    print("Could not open video")
-    sys.exit()
+# Kiểm tra xem camera có được mở hay không
+if not cap.isOpened():
+    print("Không thể mở camera")
+    exit()
 
-# Read first frame
-ok, frame = video.read()
-if not ok:
-    print("Cannot read video file")
-    sys.exit()
+frame_height = 720
+frame_width = frame_height * 16 / 9
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
 
-# Let the user draw the initial bounding box
-bbox = cv2.selectROI(frame, False)
+# Tạo thư mục "face" nếu chưa tồn tại
+os.makedirs("face", exist_ok=True)
 
-# Initialize tracker with first frame and bounding box
-ok = tracker.init(frame, bbox)
+image_counter = 0
 
+# Vòng lặp để đọc từng khung hình từ camera và nhận diện khuôn mặt
 while True:
-    # Read a new frame
-    ok, frame = video.read()
-    if not ok:
+    # Đọc khung hình từ camera
+    ret, frame = cap.read()
+
+    # Nếu không đọc được khung hình thì thoát vòng lặp
+    if not ret:
         break
 
-    # Update tracker
-    ok, bbox = tracker.update(frame)
+    # Chuyển khung hình sang ảnh xám
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # Draw bounding box
-    if ok:
-        p1 = (int(bbox[0]), int(bbox[1]))
-        p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
-        cv2.rectangle(frame, p1, p2, (0, 0, 255))
+    # Nhận diện khuôn mặt trong ảnh xám
+    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
 
-    # Display result
-    cv2.imshow("Tracking", frame)
+    # Vẽ hình chữ nhật xung quanh các khuôn mặt được nhận diện
+    for x, y, w, h in faces:
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    # Exit if ESC key is pressed
-    if cv2.waitKey(1) & 0xFF == 27:
+        # Chụp ảnh khuôn mặt và lưu vào thư mục "face"
+        face_img = frame[y : y + h, x : x + w]
+        cv2.imwrite(f"face/face_{image_counter}.jpg", face_img)
+        image_counter += 1
+
+    # Hiển thị khung hình kết quả
+    cv2.imshow("Camera", frame)
+
+    # Nhấn phím ESC để thoát khỏi vòng lặp
+    if cv2.waitKey(1) == ord("q"):
         break
 
-# Release the capture when everything is done
-video.release()
+# Giải phóng đối tượng VideoCapture và đóng tất cả các cửa sổ hiển thị
+cap.release()
 cv2.destroyAllWindows()

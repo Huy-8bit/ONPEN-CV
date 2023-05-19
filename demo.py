@@ -1,68 +1,126 @@
+import face_recognition
 import cv2
 import os
+import numpy as np
+import threading
+import tkinter as tk
+from tkinter import simpledialog
 
+# Tạo cửa sổ Tkinter để nhập tên
+root = tk.Tk()
+root.withdraw()
 
-def is_face_exist(face_path):
-    return os.path.isfile(face_path)
+video_capture = cv2.VideoCapture(0)
 
-
-# Khởi tạo bộ phân loại khuôn mặt
-face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
-
-# Khởi tạo đối tượng VideoCapture để truy cập vào camera
-cap = cv2.VideoCapture(0)
-
-# Kiểm tra xem camera có được mở hay không
-if not cap.isOpened():
-    print("Không thể mở camera")
-    exit()
-
-frame_height = 720
-frame_width = frame_height * 16 / 9
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
-
-# Tạo thư mục "face" nếu chưa tồn tại
+# Tạo thư mục 'face' nếu chưa tồn tại
 os.makedirs("face", exist_ok=True)
 
-image_counter = 0
+known_face_encodings = []
+known_face_files = []
 
-# Vòng lặp để đọc từng khung hình từ camera và nhận diện khuôn mặt
+# Load và mã hóa các khuôn mặt đã biết từ thư mục 'face'
+for file in os.listdir("face"):
+    image = face_recognition.load_image_file(f"face/{file}")
+    face_encodings = face_recognition.face_encodings(image)
+
+    if len(face_encodings) > 0:
+        known_face_encodings.append(face_encodings[0])
+        known_face_files.append(
+            os.path.splitext(file)[0]
+        )  # Lấy tên file (loại bỏ phần mở rộng)
+
+# Biến đếm frame
+frame_count = 0
+
+# Biến đồng bộ hóa cho việc sửa tên
+lock = threading.Lock()
+
+
+def modify_name(matches, face_locations):
+    for i, match in enumerate(matches):
+        person_index = -1
+        person_name = ""
+
+        if True in match:
+            person_index = match.index(True)
+
+        if person_index >= 0:
+            # Hiển thị hộp thoại nhập tên để sửa tên
+            person_name = simpledialog.askstring(
+                "Sửa tên", f"Sửa tên của người thứ {i+1}:", parent=root
+            )
+
+        if person_name:
+            with lock:
+                # Sửa tên trong danh sách các khuôn mặt đã biết
+                known_face_files[person_index] = person_name
+
+    for (top, right, bottom, left), matches in zip(face_locations, matches):
+        top *= 4
+        right *= 4
+        bottom *= 4
+        left *= 4
+
+        # Hiển thị tên khuôn mặt
+        with lock:
+            face_encoding = face_recognition.face_encodings(
+                frame, [(top, right, bottom, left)]
+            )[0]
+            name = "Unknown"
+
+            if True in matches:
+                match_index = matches.index(True)
+                name = known_face_files[match_index]
+
+        cv2.putText(
+            frame,
+            name,
+            (left + 6, bottom - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            1,
+        )
+
+
 while True:
-    # Đọc khung hình từ camera
-    ret, frame = cap.read()
+    ret, frame = video_capture.read()
 
-    # Nếu không đọc được khung hình thì thoát vòng lặp
-    if not ret:
+    # Chỉ xử lý mỗi n khung hình, ở đây ta đặt n=1
+    if frame_count % 1 == 0:
+        small_frame = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
+        face_locations = face_recognition.face_locations(small_frame)
+        face_encodings = face_recognition.face_encodings(small_frame, face_locations)
+
+        matches_list = []
+
+        for face_encoding in face_encodings:
+            matches = face_recognition.compare_faces(
+                known_face_encodings, face_encoding
+            )
+            matches_list.append(matches)
+
+        # Sử dụng đa luồng (multithreading) để sửa tên
+        modify_thread = threading.Thread(
+            target=modify_name, args=(matches_list, face_locations), daemon=True
+        )
+        modify_thread.start()
+
+    for top, right, bottom, left in face_locations:
+        top *= 4
+        right *= 4
+        bottom *= 4
+        left *= 4
+
+        # Vẽ khung đỏ xung quanh khuôn mặt
+        cv2.rectangle(frame, (left, top), (right, bottom), (0, 0, 255), 2)
+
+    cv2.imshow("Video", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
-    # Chuyển khung hình sang ảnh xám
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame_count += 1
 
-    # Nhận diện khuôn mặt trong ảnh xám
-    faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-
-    # Vẽ hình chữ nhật xung quanh các khuôn mặt được nhận diện
-    for x, y, w, h in faces:
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-
-        # Tạo đường dẫn và tên tệp tin cho ảnh khuôn mặt
-        face_path = f"face/face_{image_counter}.jpg"
-
-        # Kiểm tra xem ảnh khuôn mặt đã tồn tại trong thư mục "face" hay chưa
-        if not is_face_exist(face_path):
-            # Chụp ảnh khuôn mặt và lưu vào thư mục "face"
-            face_img = frame[y : y + h, x : x + w]
-            cv2.imwrite(face_path, face_img)
-            image_counter += 1
-
-    # Hiển thị khung hình kết quả
-    cv2.imshow("Camera", frame)
-
-    # Nhấn phím ESC để thoát khỏi vòng lặp
-    if cv2.waitKey(1) == ord("q"):
-        break
-
-# Giải phóng đối tượng VideoCapture và đóng tất cả các cửa sổ hiển thị
-cap.release()
+video_capture.release()
 cv2.destroyAllWindows()
